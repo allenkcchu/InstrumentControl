@@ -7,37 +7,51 @@ Created on Wed May 18 14:52:52 2022
 
 import os
 import sys
-import ipdb
+# import ipdb
 import pandas as pd
 import numpy as np
 import pyvisa
-import clr
+# import clr
 from time import sleep
-from clr import System
-from System.Text import StringBuilder
-from System import Int32
-from System.Reflection import Assembly
-sys.path.append('C:\\Program Files\\New Focus\\New Focus Tunable Laser Application\\Bin\\')
-clr.AddReference('UsbDllWrap')
-import Newport
-from struct import unpack
+from APTMotor import APTMotor
+from ctypes import cdll,c_long, c_ulong, c_uint32,byref,create_string_buffer,c_bool,c_char_p,c_int, c_uint8, c_int16, c_uint16, c_double, sizeof, c_voidp
+import TLBP2 
+# from clr import System
+# from System.Text import StringBuilder
+# from System import Int32
+# from System.Reflection import Assembly
+# sys.path.append('C:\\Program Files\\New Focus\\New Focus Tunable Laser Application\\Bin\\')
+# clr.AddReference('UsbDllWrap')
+# import Newport
+# from struct import unpack
 
-class TLB6700:
-    def __init__(self, ProductID, DeviceKey):
-        self.ProductID = ProductID
-        self.DeviceKey = DeviceKey
-    def __enter__(self):
-        self.answer = StringBuilder(64)
-        self.tlb = Newport.USBComm.USB()
-        self.tlb.OpenDevices(self.ProductID, True)
-        return self
-    def query(self, msg):
-        self.answer.Clear()
-        self.tlb.Query(self.DeviceKey, msg, self.answer)
-        return self.answer.ToString()
+def print_error_msg(bp2, errorCode):
+    messageBuffer = create_string_buffer(1024)
+    bp2.error_message(errorCode, messageBuffer)
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.tlb.CloseDevices()
+    if((errorCode & TLBP2._VI_ERROR) == 0):
+        print("Beam Profiler Warning:", messageBuffer.value)
+    else:
+        print("Beam Profiler Error:", messageBuffer.value)
+
+        bp2.close()
+
+# class TLB6700:
+#     def __init__(self, ProductID, DeviceKey):
+#         self.ProductID = ProductID
+#         self.DeviceKey = DeviceKey
+#     def __enter__(self):
+#         self.answer = StringBuilder(64)
+#         self.tlb = Newport.USBComm.USB()
+#         self.tlb.OpenDevices(self.ProductID, True)
+#         return self
+#     def query(self, msg):
+#         self.answer.Clear()
+#         self.tlb.Query(self.DeviceKey, msg, self.answer)
+#         return self.answer.ToString()
+
+#     def __exit__(self, exc_type, exc_value, traceback):
+#         self.tlb.CloseDevices()
 
 class AQ3675:
     def __init__(self, GPIB_address):
@@ -251,3 +265,234 @@ class HP54810A:
         return msg
     def __exit__(self, exc_type, exc_value, traceback):
         self.scope.close()
+
+
+class Keithley2401:
+    def __init__(self, COM_address):
+        self.address = COM_address
+        self.rm = pyvisa.ResourceManager()
+    def __enter__(self):
+        self.smu = self.rm.open_resource(self.address)
+        self.smu.baud_rate = 57600
+        self.smu.read_termination = '\n'
+        self.smu.write_termination = '\n'
+        self.smu.write(':FORM:ELEM VOLT,CURR,RES')
+        return self
+    def fetchData(self):
+        return [float(i) for i in self.smu.query(':READ?').split(',')]
+    def currLimit(self, CurrLim=10e-3):
+        self.smu.write(f':SENS:CURR:PROT {CurrLim}')
+    def voltLimit(self, VoltLim = 1):
+        self.smu.write(f':SENS:VOLT:PROT {VoltLim}')
+    def setVolt(self, Voltage=1):
+        self.smu.write(f':SOUR:VOLT:LEV {Voltage}')
+    def setCurr(self, Current=1e-6):
+        self.smu.write(f':SOUR:CURR:LEV {Current}')
+    def send(self, command):
+        self.smu.write(command)
+    def get(self):
+        msg = self.smu.read()
+        return msg
+    def request(self, command):
+        msg = self.smu.query(command)
+        return msg
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.smu.write(':OUTP:STAT 0')
+        self.smu.close()
+        
+class PM100USB:
+    def __init__(self, COM_address):
+        self.address = COM_address
+        self.rm = pyvisa.ResourceManager()
+    def __enter__(self):
+        self.pm = self.rm.open_resource(self.address)
+        self.pm.write(':PRES')
+        self.pm.write('AVER:COUN 5')
+        self.pm.write('CORR:WAV 1550')
+        self.pm.write('MEAS:POW')
+        return self
+    def getPower(self):
+        return float(self.pm.query('READ?'))
+    def setWavelength(self, wavelength):
+        self.pm.write(f'CORR:WAV {wavelength}')
+    def send(self, command):
+        self.pm.write(command)
+    def get(self):
+        msg = self.pm.read()
+        return msg
+    def request(self, command):
+        msg = self.pm.query(command)
+        return msg
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.pm.close()
+        
+class PAX1000IR2:
+    def __init__(self, COM_address):
+        self.address = COM_address
+        self.rm = pyvisa.ResourceManager()
+    def __enter__(self):
+        self.pax = self.rm.open_resource(self.address)
+        self.pax.write('SENS:CALC:MOD 5')
+        self.pax.write('INP:ROT:STAT 1')
+        return self
+    def getPolarization(self):
+        return [float(i) for i in self.pax.query('SENS:DATA:LAT?').split(',')]
+    def send(self, command):
+        self.pax.write(command)
+    def get(self):
+        msg = self.pax.read()
+        return msg
+    def request(self, command):
+        msg = self.pax.query(command)
+        return msg
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.pax.write('INP:ROT:STAT 0')
+        self.pax.close()
+        
+class APT:
+    def __init__(self, SerialNum=67856069, HWTYPE=29, dllname=os.path.join(os.getcwd(),'APT.dll')):
+        self.address = SerialNum
+        self.hwtype = HWTYPE
+        self.dll = dllname
+    def __enter__(self):
+        self.apt = APTMotor(SerialNum=self.address, HWTYPE=self.hwtype, dllname=self.dll)
+        hwInfo = self.apt.getHardwareInformation()
+        hwInfo = [i.decode("utf-8") for i in hwInfo]
+        self.hwInfo = f"{hwInfo[0]}, {hwInfo[1]}, {hwInfo[2]}"
+        print(f"{hwInfo[0]}, {hwInfo[1]}, {hwInfo[2]}")
+        return self
+    
+    def zero(self):
+        self.apt.go_home()
+    
+    def moveAbs(self, location):
+        self.apt.mAbs(location)
+        
+    def getPos(self):
+        return float(self.apt.getPos())
+    
+    def close(self):
+        self.apt.cleanUpAPT()
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+class BP209:
+    def __init__(self, drumSpeed = 10):
+        self.drumSpeed = drumSpeed
+
+        self.bp2 = TLBP2.TLBP2()
+        deviceCount = c_uint32()
+        self.res = self.bp2.get_connected_devices(None, byref(deviceCount))
+        if(self.res != 0):
+            print_error_msg(self.bp2, self.res)
+        if(deviceCount.value == 0):
+            print("No device connected")
+        print("Found devices: ", deviceCount.value)
+
+        self.resStr = (TLBP2.BP2_DEVICE * deviceCount.value)()
+        self.res = self.bp2.get_connected_devices(self.resStr, byref(deviceCount))
+        if(self.res != 0):
+            print_error_msg(self.bp2, self.res)
+        self.bp2.close()
+        print("Openning device: ", self.resStr[0].resourceString)
+
+        return self
+        
+    def __enter__(self):
+        self.bp2 = TLBP2.TLBP2()
+        try:
+            self.res = self.bp2.open(self.resStr[0].resourceString, c_bool(True), c_bool(True))
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res) 
+
+            instrName = create_string_buffer(1024)
+            self.res = self.bp2.get_instrument_name(instrName)
+            instrName = instrName.raw.decode("utf8").strip("\x00")
+            
+            serialNum = create_string_buffer(1024)    
+            self.res = self.bp2.get_serial_number(serialNum)
+            serialNum = serialNum.raw.decode("utf8").strip("\x00")
+            print(f"{instrName}, {serialNum}")
+            
+            device_status = c_uint16(0)
+            self.res = 0
+            while (self.res == 0 and (device_status.value & TLBP2.BP2_STATUS_SCAN_AVAILABLE) == 0):
+                self.res = self.bp2.get_device_status(byref(device_status))
+            
+            sampleCount = c_uint16()
+            resolution = c_double()
+
+            self.res = self.bp2.set_drum_speed_ex(c_double(self.drumSpeed), byref(sampleCount), byref(resolution))
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res)
+
+            gain_buffer = (c_uint8 * 5)()
+            gain_buffer[0] = c_uint8(12)
+            gain_buffer[1] = c_uint8(12)
+            gain_buffer[2] = c_uint8(12)
+            gain_buffer[3] = c_uint8(12)
+            gain_buffer[4] = c_uint8(12)
+            self.bp2.set_gains(gain_buffer, gain_buffer[4])
+            self.res = self.bp2.set_auto_gain(c_bool(True))
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res)
+            
+
+            bw_buffer = (c_double * 4)()
+            bw_buffer[0] = c_double(125.0)
+            bw_buffer[1] = c_double(125.0)
+            bw_buffer[2] = c_double(125.0)
+            bw_buffer[3] = c_double(125.0) 
+            self.res = self.bp2.set_bandwidths(bw_buffer)
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res)
+
+            min_wavelength = c_uint16()
+            max_wavelength = c_uint16()
+            self.res = self.bp2.get_wavelength_range(byref(min_wavelength), byref(max_wavelength))
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res)
+
+            self.res = self.bp2.set_wavelength(c_double(min_wavelength.value + (max_wavelength.value - min_wavelength.value)/2))
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res)
+
+            self.res = self.bp2.set_position_correction(c_int16(TLBP2.VI_ON))
+            if(self.res != 0):
+                print_error_msg(self.bp2, self.res)
+        except NameError as inst:
+            print("Name Error: ", inst)
+        except ValueError as inst:
+            print("Value Error: ", inst)
+
+        return self
+    
+    def getProfile(self):
+        data = list
+        if(self.res == 0):
+            slit_data = (TLBP2.BP2_SLIT_DATA * 4)()
+            calculation_result = (TLBP2.BP2_CALCULATIONS * 4)()
+            power = c_double()
+            powerSaturation = c_double()
+            power_intensities = (c_double * 7500)()
+            print("Calling get_slit_scan_data")
+            if(self.res == 0):
+                for count in range(10):
+                    self.res = self.bp2.get_slit_scan_data(slit_data, calculation_result, byref(power), byref(powerSaturation), power_intensities)
+                data.append(list(slit_data[0].slit_samples_positions))
+                data.append(list(slit_data[0].slit_samples_intensities))
+                data.append(list(slit_data[1].slit_samples_positions))
+                data.append(list(slit_data[1].slit_samples_intensities))
+            else:
+                print("The scan returned the error:", self.res)
+        else:
+            print("The device status returned the error:", self.res)
+        df = pd.DataFrame(data,columns = ['axis0_position','axis0_intensity','axis1_position','axis1_intensity'])
+        return df
+    
+    def close(self):
+        self.bp2.close()
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()

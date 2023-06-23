@@ -5,15 +5,6 @@ Created on Mon Aug 15 16:48:40 2022
 
 @author: allenchu
 """
-
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Aug  4 22:23:30 2022
-
-@author: wenting
-"""
-
-# -*- coding: utf-8 -*-
 """
 APT Motor Controller for Thorlabs
 Adopted from
